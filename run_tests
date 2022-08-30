@@ -1,0 +1,117 @@
+#! /bin/sh
+#
+# Helper script to run tests and generate a test report
+#
+
+usage()
+{
+cat <<EOF
+  run_tests: [-r RUNNER] [-vx]
+
+  v            verbose output (default=no)
+  k            keep going, ignore errors (default=no)
+  x            XML output (default=no)
+  r RUNNER     runner shell script for non-native targets (default=none)
+EOF
+}
+
+toggle()
+{
+  case $1 in
+    no)  echo "yes" ;;
+    yes) echo "no" ;;
+    *)   fatal "Unknown value to toggle ($1)" ;;
+  esac
+}
+
+vecho()
+{
+  if [ ${verbose} = "yes" ] ; then
+    echo "$*"
+  fi
+}
+
+verbose=no
+keep_going=no
+xml=no
+runner=
+
+while getopts "kr:vx" OPT
+do
+  case "$OPT" in
+    r) runner=${OPTARG} ;;
+    k) keep_going=`toggle ${keep_going}` ;;
+    v) verbose=`toggle ${verbose}` ;;
+    x) xml=`toggle ${xml}` ;;
+    *) usage; exit 1;
+  esac
+done
+
+shiftcount=`expr $OPTIND - 1`
+shift $shiftcount
+
+UNITTESTS="$*"
+
+if [ "X${runner}" != "X" ] ; then
+  runner=`realpath ${runner}`
+fi
+
+STARTPWD=`pwd`
+RESULTFILE="$STARTPWD/report.xml"
+for unittest in ${UNITTESTS}
+do
+  cd ${STARTPWD} 
+  dir=`dirname ${unittest}`
+  base=`basename ${unittest}`
+  echo Running ${unittest}
+
+  cd ${dir}
+  if [ -r test_prep_cleanup.sh ] ; then
+    ./test_prep_cleanup.sh prepare 
+    if [ $? -ne 0 ] ; then
+      echo $base
+    fi
+  fi
+  
+  if [ ${xml} = "yes" ] ; then
+    echo ${dir} | grep "RRADE_tests/T" 2>&1 > /dev/null
+    RRADE_TESTS=$?
+    echo ${base} | egrep "_FCT$|TypeAbstraction_Memory$" 2>&1 > /dev/null
+    RRADE_TESTS_EXCEPTIONS=$?
+    if [ "$RRADE_TESTS_EXCEPTIONS" = "0" ]; then
+      ${runner} ./${base} -l junit >> "$STARTPWD/$base-result.xml"
+    elif [ "$RRADE_TESTS" = "0" ]; then
+      ${runner} ./${base} -ojunit >> "$STARTPWD/$base-result.xml"
+    else
+      ${runner} ./${base} -l junit >> "$STARTPWD/$base-result.xml"
+    fi
+    RETURN_CODE=$?
+
+    # check for bad test run
+    egrep "0/0 tests|usage.*testName.*junit" $STARTPWD/$base-result.xml 2>&1 > /dev/null
+    if [ "$?" = "0" ]; then
+      echo "Test ${unittest} produced bad test output (no tests run)"
+      exit 1;
+    fi
+
+  else
+    ${runner} ./${base}
+    RETURN_CODE=$?
+  fi
+
+  if [ $RETURN_CODE -ne 0 ] ; then
+    echo Test ${base} failed:
+    if [ ${xml} = "yes" ] ; then
+      cat "$STARTPWD/$base-result.xml"
+    fi
+    if [ ${keep_going} = "no" ]; then
+      exit 1;
+    fi
+  fi
+
+  if [ -r test_prep_cleanup.sh ] ; then
+    ./test_prep_cleanup.sh cleanup 
+  fi
+done
+
+exit 0

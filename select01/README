@@ -1,0 +1,4 @@
+
+This is a multiport echo example
+
+Use "telnet IP PORT" to drive it.
